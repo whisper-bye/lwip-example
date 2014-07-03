@@ -6,7 +6,6 @@
  */
 
 
-#include "mch.h"
 #include "lwip/inet.h"
 #include "lwip/tcp.h"
 #include "lwip/ip_frag.h"
@@ -14,8 +13,12 @@
 #include "lwip/init.h"
 #include "lwip/stats.h"
 #include "netif/etharp.h"
+#include "lwip/timers.h"
+#include "lwip/tcp_impl.h"
+#include "lwip/udp.h"
 
 #include <time.h>
+#include <assert.h>
 
 #define NUM_INTERFACES				2
 
@@ -42,6 +45,12 @@ void mch_timestamp_init() {
 	return;
 }
 
+u32_t sys_now() {
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ts.tv_sec * 1000 + (ts.tv_nsec / (1000 * 1000));
+}
+
 static mch_timestamp ts_etharp;
 static mch_timestamp ts_tcp;
 static mch_timestamp ts_ipreass;
@@ -54,7 +63,7 @@ err_t mchdrv_output(struct netif *netif, struct pbuf *p, ip_addr_t *ipaddr)
 	err_t err;
 
 	/* verbose print */
-	printf("%s: on interface %d, len %d\n", __func__, (int)netif->state,
+	printf("%s: on interface %d, len %d\n", __func__, (int)(uint64_t)netif->state,
 			p->tot_len);
 
 
@@ -74,9 +83,9 @@ err_t mchdrv_output(struct netif *netif, struct pbuf *p, ip_addr_t *ipaddr)
 	}
 
 	/* input the packet to the other netif */
-	assert((u8_t)netif->state <= 1);
-	dest_netif = mchdrv_netif[1 - (u8_t)netif->state];
-	err = dest_netif->input(dest_pbuf);
+	assert((uint64_t)netif->state <= 1);
+	dest_netif = &mchdrv_netif[1 - (u8_t)(uint64_t)netif->state];
+	err = dest_netif->input(dest_pbuf, dest_netif);
 	if (err != ERR_OK)
 		printf("%s: dest_netif->input returned error %d", __func__, err);
 
@@ -91,7 +100,7 @@ err_t mchdrv_init(struct netif *netif)
 	netif->mtu = 1500;
 	netif->name[0] = 'i';
 	netif->name[1] = 'p';
-	netif->num = (u8_t)netif->state;
+	netif->num = (u8_t)(uint64_t)netif->state;
 
 	netif->output = mchdrv_output;
 
@@ -122,8 +131,8 @@ int mch_net_init(void)
 
     // Add our netif to LWIP (netif_add calls our driver initialization function)
     for (i = 0; i < NUM_INTERFACES; i++) {
-		if (netif_add(&mchdrv_netif[i], &mch_myip_addr, &netmask, &gw_addr,
-				(void *)0, mchdrv_init, ip_input) == NULL) {
+		if (netif_add(&mchdrv_netif[i], &mch_myip_addr[i], &netmask, &gw_addr,
+				(void *)(uint64_t)i, mchdrv_init, ip_input) == NULL) {
 			mch_printf("mch_net_init (%d): netif_add (mchdrv_init) failed\n", i);
 			return -1;
 		}
@@ -154,7 +163,7 @@ void mch_net_poll(void)
     mch_timestamp now;
 
     // Call network interface to process incoming packets and do housekeeping
-    mchdrv_poll(&mchdrv_netif);
+    //mchdrv_poll(&mchdrv_netif);
 
     // Process lwip network-related timers.
     mch_timestamp_get(&now);
@@ -219,7 +228,7 @@ void test_udp()
 	}
 
 	/* bind the server side */
-	err = udp_bind(udp_dst, mch_myip_addr[1], 2222);
+	err = udp_bind(udp_dst, &mch_myip_addr[1], 2222);
 	if (err != ERR_OK) {
 		printf("%s: binding returned error %d\n", __func__, err);
 		return;
@@ -234,7 +243,7 @@ void test_udp()
 	}
 
 	/* send the pbuf */
-	err = udp_sendto_if(udp_src, p, mch_myip_addr[1], 2222, mchdrv_netif[0]);
+	err = udp_sendto_if(udp_src, p, &mch_myip_addr[1], 2222, &mchdrv_netif[0]);
 	if (err != ERR_OK) {
 		printf("%s: udp_sendto_if returned %d\n", __func__, err);
 		return;

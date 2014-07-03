@@ -28,6 +28,7 @@ COREFILES=$(LWIPDIR)/core/mem.c             \
     $(LWIPDIR)/core/tcp.c               \
     $(LWIPDIR)/core/tcp_in.c            \
     $(LWIPDIR)/core/tcp_out.c           \
+    $(LWIPDIR)/core/timers.c            \
     $(LWIPDIR)/core/udp.c               \
     $(LWIPDIR)/core/dhcp.c              \
     $(LWIPDIR)/core/init.c              \
@@ -41,27 +42,31 @@ CORE4FILES=$(LWIPDIR)/core/ipv4/icmp.c          \
 # NETIFFILES: Files implementing various generic network interface functions.'
 NETIFFILES=$(LWIPDIR)/netif/etharp.c
 
+MAIN_FILES=$(LWIPARCH)/mch_main.c       \
+	$(LWIPARCH)/src/sys_arch.c
+
+
 # LWIPFILES: All the above.
-LWIPFILES=$(COREFILES) $(CORE4FILES) $(NETIFFILES)
+LWIPFILES=$(MAIN_FILES) $(COREFILES) $(CORE4FILES) $(NETIFFILES)
 OBJS=$(LWIPFILES:.c=.o)
 
-LWIPLIB=liblwip4.a
+LWIPMAIN=test_lwip
 
-all compile: $(LWIPLIB)
+all compile: $(LWIPMAIN)
 	mkdir -p $(TARGETDIR)
-	install $(LWIPLIB) $(TARGETDIR)
+#	install $(LWIPLIB) $(TARGETDIR)
 
 .PHONY: all depend compile clean
 
 %.o:
-	$(CC) $(CFLAGS) -c $(@:.o=.c) -o $(TARGETDIR)/$@
+	$(CC) $(CFLAGS) -c $(@:.o=.c) -o $@
 
 clean:
-	rm -f *.o $(LWIPLIB) .depend*
+	rm -f *.o $(LWIPLIB) $(LWIPMAIN) .depend*
 	find . -name \*.o |xargs --no-run-if-empty rm
 
-$(LWIPLIB): $(OBJS)
-	$(AR) $(ARFLAGS) $(LWIPLIB) $?
+$(LWIPMAIN): $(OBJS)
+	$(CC) $(LDFLAGS) -o $(LWIPMAIN) $?
 
 depend dep: .depend
 
