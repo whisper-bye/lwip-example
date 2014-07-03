@@ -6,7 +6,7 @@
 #define MEM_LIBC_MALLOC             1
 #define MEMP_MEM_MALLOC             1
 #define MEM_ALIGNMENT               4
-#define MEM_SIZE                    (4 * 1024 * 1024)
+#define MEM_SIZE                    (4 * 1024 * 1024) /* unused when MEM_LIBC_MALLOC==1 */
 #define MEMP_NUM_PBUF               1024
 #define MEMP_NUM_UDP_PCB            20
 #define MEMP_NUM_TCP_PCB            20
@@ -49,14 +49,6 @@
 #define TCP_KEEPIDLE_DEFAULT        10000UL // Default KEEPALIVE timer in milliseconds
 #define TCP_KEEPINTVL_DEFAULT       2000UL  // Default Time between KEEPALIVE probes in milliseconds
 #define TCP_KEEPCNT_DEFAULT         9U      // Default Counter for KEEPALIVE probes
-
-#include "mch.h"
-
-#define mem_init()
-#define mem_free                    mch_free
-#define mem_malloc                  mch_malloc
-#define mem_calloc(c, n)            mch_zalloc((c) * (n))
-#define mem_realloc(p, sz)          (p)
 
 #define LWIP_DEBUG                  0
 

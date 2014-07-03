@@ -15,26 +15,88 @@
 #include "lwip/stats.h"
 #include "netif/etharp.h"
 
-struct ip_addr mch_myip_addr;
+#include <time.h>
+
+#define NUM_INTERFACES				2
+
+char *MCH_IP_ADDRS[NUM_INTERFACES] = {"192.168.1.11", "192.168.1.22"};
+struct ip_addr mch_myip_addr[NUM_INTERFACES];
+static struct netif mchdrv_netif[NUM_INTERFACES];
 
 #define MCH_ARP_TIMER_INTERVAL      (ARP_TMR_INTERVAL * 1000)
 #define MCH_TCP_TIMER_INTERVAL      (TCP_TMR_INTERVAL * 1000)
 #define MCH_IPREASS_TIMER_INTERVAL  (IP_TMR_INTERVAL * 1000)
 
+#define MCH_IPADDR_GW	 			"192.168.1.254"
+#define MCH_IPADDR_NETMASK 			"255.255.255.0"
+
+typedef struct timespec mch_timestamp;
+void mch_timestamp_get(mch_timestamp *ts) {
+	clock_gettime(CLOCK_MONOTONIC, ts);
+}
+
+s32_t mch_timestamp_diff(mch_timestamp *a, mch_timestamp *b) {
+	return 1000 * (b->tv_sec - a->tv_sec) + (b->tv_nsec - a->tv_nsec) / (1000 * 1000);
+}
+void mch_timestamp_init() {
+	return;
+}
+
 static mch_timestamp ts_etharp;
 static mch_timestamp ts_tcp;
 static mch_timestamp ts_ipreass;
 
-// Our network interface structure
-static struct netif mchdrv_netif;
 
-// Functions from my netif driver
-// Probe function (find the device, return driver private data)
-extern int mchdrv_probe(struct mch_pci_dev *, void **, uint8_t *);
-// Init function
-extern int mchdrv_attach(struct netif *);
-// Poll for received frames
-extern void mchdrv_poll(struct netif *);
+err_t mchdrv_output(struct netif *netif, struct pbuf *p, ip_addr_t *ipaddr)
+{
+	struct pbuf *dest_pbuf;
+	struct netif *dest_netif;
+	err_t err;
+
+	/* verbose print */
+	printf("%s: on interface %d, len %d\n", __func__, (int)netif->state,
+			p->tot_len);
+
+
+	/* we copy p to a new destination pbuf, because the tcp stack could change
+	 * buffers on retransmits (according to the wiki) */
+	dest_pbuf = pbuf_alloc(PBUF_RAW, p->tot_len, PBUF_RAM);
+	if (dest_pbuf == NULL) {
+		printf("%s: could not allocate destination pbuf\n", __func__);
+		return ERR_MEM;
+	}
+
+	err = pbuf_copy(dest_pbuf, p);
+	if (err != ERR_OK) {
+		printf("%s: buffer copy returned %d\n", __func__, err);
+		pbuf_free(dest_pbuf);
+		return err;
+	}
+
+	/* input the packet to the other netif */
+	assert((u8_t)netif->state <= 1);
+	dest_netif = mchdrv_netif[1 - (u8_t)netif->state];
+	err = dest_netif->input(dest_pbuf);
+	if (err != ERR_OK)
+		printf("%s: dest_netif->input returned error %d", __func__, err);
+
+	return ERR_OK;
+}
+
+err_t mchdrv_init(struct netif *netif)
+{
+	/* we're not using hwaddr */
+	netif->hwaddr_len = 0;
+
+	netif->mtu = 1500;
+	netif->name[0] = 'i';
+	netif->name[1] = 'p';
+	netif->num = (u8_t)netif->state;
+
+	netif->output = mchdrv_output;
+
+	return ERR_OK;
+}
 
 int mch_net_init(void)
 {
@@ -43,10 +105,13 @@ int mch_net_init(void)
     void * mchdrvnet_priv;
     uint8_t mac_addr[6];
     int err = -1;
+    int i;
 
     // Hard-coded IP for my address, gateway and netmask
-    if (mch_net_aton(MCH_IPADDR_BASE, &mch_myip_addr))
-        return -1;
+    for (i = 0; i < NUM_INTERFACES; i++) {
+    	if (mch_net_aton(MCH_IP_ADDRS[i], &mch_myip_addr[i]))
+    		return -1;
+    }
     if (mch_net_aton(MCH_IPADDR_GW, &gw_addr))
         return -1;
     if (mch_net_aton(MCH_IPADDR_NETMASK, &netmask))
@@ -55,30 +120,18 @@ int mch_net_init(void)
     // Initialize LWIP
     lwip_init();
 
-    // Initialize PCI bus structure
-    mch_pci_init();
-
-    // Search through the list of PCI devices until we find our NIC
-    mchdrv_pcidev = NULL;
-    while ((mchdrv_pcidev = mch_pci_next(mchdrv_pcidev)) != NULL) {
-        if ((err = mchdrv_probe(mchdrv_pcidev, &mchdrvnet_priv, mac_addr)) == 0)
-            break;
-    }
-
-    if (mchdrv_pcidev == NULL) {
-        mch_printf("mch_net_init: network adapter not found\n");
-        return -1;
-    }
-
     // Add our netif to LWIP (netif_add calls our driver initialization function)
-    if (netif_add(&mchdrv_netif, &mch_myip_addr, &netmask, &gw_addr, mchdrvnet_priv,
-                mchdrv_init, ethernet_input) == NULL) {
-        mch_printf("mch_net_init: netif_add (mchdrv_init) failed\n");
-        return -1;
+    for (i = 0; i < NUM_INTERFACES; i++) {
+		if (netif_add(&mchdrv_netif[i], &mch_myip_addr, &netmask, &gw_addr,
+				(void *)0, mchdrv_init, ip_input) == NULL) {
+			mch_printf("mch_net_init (%d): netif_add (mchdrv_init) failed\n", i);
+			return -1;
+		}
     }
 
-    netif_set_default(&mchdrv_netif);
-    netif_set_up(&mchdrv_netif);
+    netif_set_default(&mchdrv_netif[0]);
+    netif_set_up(&mchdrv_netif[0]);
+    netif_set_up(&mchdrv_netif[1]);
 
     // Initialize timer values
     mch_timestamp_get(&ts_etharp);
@@ -132,17 +185,74 @@ int mch_net_aton(char * str_addr, struct ip_addr * net_addr)
     return 0;
 }
 
+void test_udp_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p,
+	    ip_addr_t *addr, u16_t port)
+{
+	printf("%s: len %d, from %s port %d\n", __func__, p->tot_len,
+			ipaddr_ntoa(addr), port);
+
+	/* it's our responsibility to dealloc the pbuf */
+	pbuf_free(p);
+}
+
+void test_udp()
+{
+	struct udp_pcb *udp_src;
+	struct udp_pcb *udp_dst;
+	struct pbuf *p;
+	err_t err;
+
+	/* note: we don't bother freeing memory on failure */
+
+	printf("testing udp.\n");
+
+	printf("\tallocating pcbs.\n");
+	udp_src = udp_new();
+	if (udp_src == NULL) {
+		printf("%s: couldn't allocate src pcb\n", __func__);
+		return;
+	}
+	udp_dst = udp_new();
+	if (udp_dst == NULL) {
+		printf("%s: couldn't allocate dst pcb\n", __func__);
+		return;
+	}
+
+	/* bind the server side */
+	err = udp_bind(udp_dst, mch_myip_addr[1], 2222);
+	if (err != ERR_OK) {
+		printf("%s: binding returned error %d\n", __func__, err);
+		return;
+	}
+	udp_recv(udp_dst, test_udp_recv, NULL);
+
+	/* make test pbuf */
+	p = pbuf_alloc(PBUF_TRANSPORT, 15, PBUF_RAM);
+	if (p == NULL) {
+		printf("%s: couldn't allocate pbuf\n", __func__);
+		return;
+	}
+
+	/* send the pbuf */
+	err = udp_sendto_if(udp_src, p, mch_myip_addr[1], 2222, mchdrv_netif[0]);
+	if (err != ERR_OK) {
+		printf("%s: udp_sendto_if returned %d\n", __func__, err);
+		return;
+	}
+}
+
 //
 // Main entry point
 //
 int main(void)
 {
-    [snip other non-lwip initializations]
     mch_timestamp_init();       // Initialize timestamp generator
     mch_net_init();
-    while (1) {
-        [snip other non-lwip functions]
-        mch_wait_for_interrupt();   // Awakened by network, timer or other interrupt
-        mch_net_poll();             // Poll network stack
-    }
+    test_udp();
+//    while (1) {
+//        [snip other non-lwip functions]
+//        mch_wait_for_interrupt();   // Awakened by network, timer or other interrupt
+//        mch_net_poll();             // Poll network stack
+//    }
+
 }

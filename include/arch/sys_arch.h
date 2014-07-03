@@ -1,12 +1,5 @@
-/*
- * sys_arch.h
- *
- *  Created on: Jul 2, 2014
- *      Author: yonch
- */
-
-#ifndef LWIP_JS_SYS_ARCH_H_
-#define LWIP_JS_SYS_ARCH_H_
+#ifndef __ARCH_SYS_ARCH_H__
+#define __ARCH_SYS_ARCH_H__
 
 #define SYS_MBOX_NULL   NULL
 #define SYS_SEM_NULL    NULL
@@ -20,4 +13,5 @@ typedef void * sys_mbox_t;
 typedef void * sys_thread_t;
 
 
-#endif /* LWIP_JS_SYS_ARCH_H_ */
+#endif /* __ARCH_SYS_ARCH_H__ */
+

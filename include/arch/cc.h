@@ -7,10 +7,10 @@
 #include <string.h>
 #include <sys/time.h>
 
-// Includes definition of mch_printf macro to do printf
-#include "mch.h"
+#define mch_printf printf
+#define mch_abort abort
 
-#define BYTE_ORDER  BIG_ENDIAN
+/* BYTE_ORDER is defined by stdlib.h on Linux */
 
 typedef uint8_t     u8_t;
 typedef int8_t      s8_t;
